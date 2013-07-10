@@ -1,0 +1,245 @@
+local tArgs = {...}
+local sDir = tArgs[1].."/"
+local firstTime = false
+local _printError = printError
+local _ipairs = ipairs
+local _tbInsert = table.insert
+local _fsCombine = fs.combine
+local _sub = string.sub
+local _len = string.len
+
+local function queue(_sWord)
+  for p = 1, #_sWord do
+		os.queueEvent("char", _sWord:sub(p, p))
+	end
+	os.queueEvent("key", keys.enter)
+end
+
+--Backup FS declarations...
+local _fs = {}
+for k, v in pairs(fs) do
+	_fs[k] = v
+end
+
+-- Backup other declarations..
+local oldDfile = dofile
+local oldLfile = loadfile
+local err = error
+local _assert = assert
+local oldReboot = os.reboot
+local oldShutdown = os.shutdown
+local oMountPath = disk.getMountPath
+local oPresent = disk.isPresent
+local oldsenv = setfenv
+local oldmeta = setmetatable
+local orset = rawset
+local bPair = pairs
+
+local function centerPrint(_text, _nY)
+	if type(_text) == "table" then
+    for _, v in pairs(_text) do centerPrint(v) end
+  else
+    local x, y = term.getCursorPos()
+    local w, h = term.getSize()
+    term.setCursorPos(w/2 - _text:len()/2, _nY or y)
+    print(_text)
+  end
+end
+
+local function centerWrite(_text, _nY)
+	if type(_text) == "table" then
+    for _, v in pairs(_text) do centerWrite(v) end
+  else
+    local x, y = term.getCursorPos()
+    local w, h = term.getSize()
+    term.setCursorPos(w/2 - _text:len()/2, _nY or y)
+    write(_text)
+  end
+end
+
+local function md(_sDir)
+	os.queueEvent(" ")
+	os.pullEventRaw()
+	return fs.makeDir(sDir.."/".._sDir)
+end
+
+local function cp(_sSource, _sDest)
+	_sDest = _sDest or sDir.."/".._sSource
+	os.queueEvent(" ")
+	os.pullEventRaw()
+	return pcall(fs.copy, _sSource, _sDest)
+end
+
+local function clear()
+	term.clear()
+	term.setCursorPos(1, 1)
+end
+
+local function sandbox(sDirectory)
+	local sandboxed = sDirectory
+	local rT = {[1] = sandboxed, [2] = sandboxed.."rom"}
+
+	local function check(_sFilename)
+		if _sub(_sFilename, 1, _len(sandboxed)+4) == (sandboxed.."rom/" or sandboxed.."rom\\") then
+      return true
+    end
+		for k, v in bPair(rT) do
+			if v == _sFilename then return true end
+		end
+		return false
+	end
+
+	local function isAllowed()
+		return false
+	end
+
+	local function errorout()
+		err("Access denied", 3)
+	end
+
+	local function returnResolved(_sPath)
+		if _sPath == nil then return sandboxed end
+		local newPath = _fsCombine("", _sPath)
+		if (_sub(newPath, 1, 2) == ".." and _len(newPath) == 2) or (_sub(newPath, 1, 3) == "../") then return nil end
+		return sandboxed.._sPath
+	end
+  
+	function fs.open(_sFile, _sMode)
+		local rFile = returnResolved(_sFile)
+		if rFile == nil then return nil end
+    if isAllowed() then return _fs.open(_sFile, _sMode) end
+		if _sMode ~= ("r" or "rb" or nil) then
+      if check(_sFile) then
+				errorout()
+			end
+		end
+		return _fs.open(_sFile, _sMode)
+	end
+  
+	function fs.exists(_sFile)
+		local rFile = returnResolved(_sFile)
+		if rFile == nil then return false end
+		return _fs.exists(rFile)
+	end
+  
+	function fs.isDir(_sFile)
+		local rFile = returnResolved(_sFile)
+		if rFile == nil then return false end
+		return _fs.isDir(rFile)
+	end
+  
+	function fs.delete(_sFile)
+		local rFile = returnResolved(_sFile)
+		if rFile == nil then err("Invalid path", 2) end
+		if isAllowed() then return _fs.delete(rFile) end
+    if check(rFile) then
+			errorout()
+		end
+		return _fs.delete(rFile)
+	end
+  
+	function fs.copy(_sSource, _sDest)
+		local rSource = returnResolved(_sSource)
+		local rDest = returnResolved(_sDest)
+    if (rSource or rDest) == nil then err("Invalid Path", 2) end
+		if isAllowed() then return _fs.copy(rSource, rDest) end
+    if check(rDest) then
+			errorout()
+		end
+		return _fs.copy(rSource, rDest)
+	end
+  
+	function fs.move(_sSource, _sDest)
+		local rSource = returnResolved(_sSource)
+		local rDest = returnResolved(_sDest)
+    if rSource == nil or rDest == nil then err("Invalid Path", 2) end
+		if isAllowed() then return _fs.move(rSource, rDest) end
+    if check(rSource) or check(rDest) then
+			errorout()
+		end
+		return _fs.move(rSource, rDest)
+	end
+  
+	function fs.isReadOnly(_sFile)
+		local rFile = returnResolved(_sFile)
+		if rFile == nil then return false end
+		if check(rFile) then
+			return true
+		end
+		return _fs.isReadOnly(rFile)
+	end
+  
+	function fs.list(_sRawDir)
+		local rDir = returnResolved(_sRawDir)
+    if rDir == nil then err("Invalid Path",2) end
+		local tFiles = _fs.list(rDir)
+		return tFiles
+	end
+  
+	function fs.getName(_sFile)
+		local rFile = returnResolved(_sFile)
+    if rFile == nil then err("Invalid Path", 2) end
+		if rFile == sandboxed then return "root" end
+		return _fs.getName(rFile)
+	end
+  
+	function fs.makeDir(_sDir)
+		local rDir = returnResolved(_sDir)
+    if rDir == nil then err("Invalid Path", 2) end
+		return _fs.makeDir(rDir)
+	end
+  
+	function fs.getSize(_sFilepath)
+		local rFilepath = returnResolved(_sFilepath)
+    if rFilepath == nil then err("Invalid Path", 2) end
+		return _fs.getSize(rFilepath)
+	end
+  
+  function fs.getDrive(_sFilepath)
+		local rFilepath = returnResolved(_sFilepath)
+    if rFilepath == nil then err("Invalid Path", 2) end
+		if check(rFilepath) then return "rom" end
+		return _fs.getDrive(rFilepath)
+	end
+end
+
+local function restore()
+	_G.fs = {}
+	for k, v in bPair(_fs) do
+		_G.fs[k] = v
+	end
+	_G.setfenv=oldsenv
+	_G.os.reboot=oldReboot
+	_G.os.shutdown=oldShutdown
+	_G.setmetatable=oldmeta
+	_G.rawset=orset
+end
+
+--Main program begins here...
+if not fs.isDir(sDir) or not fs.isDir(sDir.."/rom") then 
+  local firstTime = true
+	fs.delete(sDir)
+  fs.makeDir(sDir)
+	md("rom")
+	md("rom/programs")
+	md("rom/programs/secret")
+	md("rom/apis")
+	md("rom/help")
+	cp("rom/startup")
+	for k, v in pairs(fs.list("rom/programs")) do
+		cp("rom/programs/"..v)
+	end
+	for k, v in pairs(fs.list("rom/apis")) do
+		cp("rom/apis/"..v)
+	end
+	for k, v in pairs(fs.list("rom/help")) do
+		cp("rom/help/"..v)
+	end
+end
+
+sandbox(sDir)
+
+os.shutdown = function()
+	restore()
+	oldShutdown()
+end
